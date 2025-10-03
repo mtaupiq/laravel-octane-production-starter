@@ -1,0 +1,57 @@
+ARG PHP_VERSION=8.3
+FROM php:${PHP_VERSION}-alpine AS base
+
+# System deps
+RUN apk add --no-cache git curl tzdata bash libstdc++ libzip-dev icu-dev     oniguruma-dev libpng-dev libjpeg-turbo-dev libwebp-dev freetype-dev     $PHPIZE_DEPS
+
+# PHP extensions
+RUN docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype  && docker-php-ext-install pdo pdo_mysql mbstring zip gd intl opcache
+
+# Install Swoole (without async/coroutine hooks that require extra libs)
+RUN pecl install swoole  && docker-php-ext-enable swoole
+
+# Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+# Opcache tuned for prod (override in dev if needed)
+RUN {   echo "opcache.enable=1";   echo "opcache.enable_cli=1";   echo "opcache.memory_consumption=256";   echo "opcache.max_accelerated_files=20000";   echo "opcache.validate_timestamps=0"; } > /usr/local/etc/php/conf.d/opcache.ini
+
+# ---------- Dev image (w/ node for vite) ----------
+FROM base AS dev
+# Node for Vite dev (optional). You can comment these two lines if you run node separately.
+RUN apk add --no-cache nodejs npm
+CMD ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--watch"]
+
+# ---------- Build assets stage ----------
+FROM node:20-alpine AS asset-builder
+WORKDIR /app
+COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
+# Fallback to npm if lockfile not present
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund;     elif [ -f yarn.lock ]; then yarn install --frozen-lockfile;     elif [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i --frozen-lockfile;     else npm install --no-audit --no-fund; fi
+COPY . .
+RUN if [ -f package.json ]; then       if grep -q '"build"' package.json; then npm run build; else echo "no build script, skipping"; fi;     fi
+
+# ---------- Production runtime (Octane) ----------
+FROM base AS prod
+ENV APP_ENV=production     APP_DEBUG=false     LOG_CHANNEL=stderr
+# Create non-root user
+ARG WWWUSER=1000
+ARG WWWGROUP=1000
+RUN addgroup -g ${WWWGROUP} laravel && adduser -D -G laravel -u ${WWWUSER} laravel
+USER laravel
+WORKDIR /var/www/html
+
+# Copy app source (expect context is project root)
+COPY --chown=laravel:laravel . .
+# Install dependencies
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+# Copy built assets from builder if available
+COPY --from=asset-builder /app/public/build ./public/build 2>/dev/null || true
+
+# Optimize Laravel
+RUN php artisan storage:link || true  && php artisan config:cache  && php artisan route:cache  && php artisan view:cache
+
+EXPOSE 8000
+CMD ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=4", "--task-workers=4"]
