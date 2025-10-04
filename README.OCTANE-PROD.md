@@ -1,217 +1,261 @@
-# Laravel Octane (Swoole) + Production Variants
+# Laravel Octane Production Multi-Runtime Starter
 
-This bundle provides **3 deployment variants + 1 initialization variant** to simplify your Laravel app lifecycle:
+> **Run Laravel Octane with either Swoole or FrankenPHP** using Docker. This starter provides dev and production setups, automatic environment bootstrapping, and practical troubleshooting notes tailored for containerized workflows.
 
-1) **Octane Dev** (Swoole) behind Nginx → `docker-compose.octane.dev.yml`
-2) **Octane Production** (Swoole) behind Nginx → `docker-compose.octane.prod.yml`
-3) **Classic Production** (PHP‑FPM + Nginx, multi-stage) → `docker-compose.prod.classic.yml`
-4) **Init Project** (dedicated initialization stack) → `docker-compose.octane.init.yml`
+---
+
+## Table of Contents
+- [Overview](#overview)
+- [Directory Layout](#directory-layout)
+- [Prerequisites](#prerequisites)
+- [Initialization (First-Time Setup)](#initialization-first-time-setup)
+  - [Option A — Init Compose Stack](#option-a--init-compose-stack)
+  - [Option B — One-off Run](#option-b--one-off-run)
+- [Development](#development)
+  - [A) Swoole Dev (`docker-compose.octane.dev.yml`)](#a-swoole-dev-docker-composeoctanedevyml)
+  - [B) FrankenPHP Dev (`docker-compose.franken.dev.yml`)](#b-frankenphp-dev-docker-composefrankendevyml)
+- [Production](#production)
+  - [A) Swoole Prod (`docker-compose.octane.prod.yml`)](#a-swoole-prod-docker-composeoctane-prodyml)
+  - [B) FrankenPHP Prod (`docker-compose.franken.prod.yml`)](#b-frankenphp-prod-docker-composefrankenprodyml)
+- [Environment Auto-Configuration](#environment-auto-configuration)
+- [Watcher (`--watch`) & Chokidar](#watcher---watch--chokidar)
+- [Troubleshooting](#troubleshooting)
+- [Performance Tips](#performance-tips)
+- [Optional: Makefile Shortcuts](#optional-makefile-shortcuts)
+
+---
+
+## Overview
+This starter supports **two Octane runtimes**:
+
+- **Swoole**: Longstanding high‑performance server for Octane. Requires PHP extensions `pcntl` and `swoole`.
+- **FrankenPHP**: Modern PHP application server bundling Caddy, supports worker mode; simpler networking (Nginx optional), great for containerized deploys.
+
+You can keep **both** modes in the same repo and choose at runtime via different Dockerfiles & compose files.
+
+---
+
+## Directory Layout
+```
+.
+├── app/                           # Laravel application source (bind-mounted in dev)
+├── docker/
+│   ├── nginx.octane.conf          # Nginx (Swoole) reverse proxy (dev/prod variants)
+│   ├── dev-start.sh               # Dev start script (Swoole) – .env patch + watcher
+│   ├── dev-start-franken.sh       # Dev start script (FrankenPHP) – .env patch + watcher
+│   └── php.ini                    # Optional PHP overrides (e.g., disable_functions=)
+├── Dockerfile.octane              # Swoole dev/prod stages
+├── Dockerfile.franken             # FrankenPHP dev/prod stages
+├── docker-compose.octane.init.yml # Bootstrap-only stack (keeps octane alive w/ sleep)
+├── docker-compose.octane.dev.yml  # Dev: Swoole + Nginx
+├── docker-compose.octane.prod.yml # Prod: Swoole (+ Nginx proxy)
+├── docker-compose.franken.dev.yml # Dev: FrankenPHP (no Nginx required)
+└── docker-compose.franken.prod.yml# Prod: FrankenPHP (proxy optional)
+```
+
+> **Tip**: Keep your infrastructure files in repo root and the Laravel app inside `./app` to avoid `create-project` collisions with Docker files.
 
 ---
 
 ## Prerequisites
-- Project root must contain a `composer.json` (Laravel app). If it’s empty, initialize using one of the **init options** below.
-- Docker & Docker Compose v2.
-- Default exposed port: `8080` (from Nginx). You can change it in the compose file.
-
-## Key Files Overview
-- `docker-compose.octane.dev.yml` — Dev stack (Nginx + Octane/Swoole, hot-ish reload via bind mounts)
-- `docker-compose.octane.prod.yml` — Production stack (Nginx + Octane/Swoole, optimized build)
-- `docker-compose.prod.classic.yml` — Classic production (Nginx + PHP‑FPM)
-- `docker-compose.octane.init.yml` — Temporary stack for **project initialization**
-- `Dockerfile.octane` — Base image for Octane (Swoole)
-- `Dockerfile.prod` — Base image for PHP‑FPM (classic)
-- `docker/nginx.octane.conf` — Example Nginx config for Octane (optional: copy to `docker/nginx.conf`)
-
-> **Note:** The `Dockerfile.octane` uses `CMD php artisan octane:start`, meaning the Laravel app **must already exist** before the service can run properly.
+- Docker & Docker Compose v2
+- For **Swoole** builds: PHP extensions `pcntl` and `swoole` must be installed in the image (see `Dockerfile.octane`).
+- For **FrankenPHP** builds: image `ghcr.io/dunglas/frankenphp:*` (see `Dockerfile.franken`).
+- Default dev port is **8080** (mapped to 8000 inside the container).
 
 ---
 
-## Project Initialization (Choose One Option)
-Since the `octane` service runs `php artisan octane:start`, the Laravel app must exist before starting the dev/prod stack. Use one of the following safe methods:
+## Initialization (First-Time Setup)
+You need a Laravel app in `./app`. Choose one option below.
 
-### Option A — **Init Stack** (Recommended)
-1. Start the init stack:
-```bash
-docker compose -f docker-compose.octane.init.yml up -d --build
-```
-2. Create the Laravel project inside the container:
-```bash
-docker compose -f docker-compose.octane.init.yml exec octane bash -lc "set -e; [ -f artisan ] || composer create-project laravel/laravel .; php artisan key:generate || true; if php -m | grep -qi swoole; then echo 'swoole OK'; else echo '[ERROR] PHP ext-swoole not installed.'; exit 1; fi; composer require laravel/octane:^2.5 --no-interaction --no-progress; php artisan octane:install --server=swoole --no-interaction || true; echo '✅ Laravel + Octane (Swoole) ready.'"
-```
-3. Shut down the init stack:
-```bash
-docker compose -f docker-compose.octane.init.yml down
-```
-4. Proceed with **Dev** or **Prod** modes (see below).
+### Option A — Init Compose Stack
+1. Create the `app` folder:
+   ```bash
+   mkdir -p app
+   ```
+2. Start the **init** stack (keeps Octane container alive):
+   ```bash
+   docker compose -f docker-compose.octane.init.yml up -d --build
+   ```
+3. Inside the `octane` container, create the app and install Octane:
+   
+   Swoole:
+   ```bash
+   docker compose -f docker-compose.octane.init.yml exec octane bash -lc \
+     'set -e; [ -f artisan ] || composer create-project laravel/laravel .; \
+      php artisan key:generate || true; \
+      composer require laravel/octane --no-interaction --no-progress; \
+      php artisan octane:install --server=swoole || true'
+   ```
+   FrankenPHP:
+   ```bash
+   docker compose -f docker-compose.octane.init.yml exec octane bash -lc \
+     'set -e; [ -f artisan ] || composer create-project laravel/laravel .; \
+      php artisan key:generate || true; \
+      composer require laravel/octane --no-interaction --no-progress; \
+      php artisan octane:install --server=frankenphp || true'
+   ```
+4. Stop the init stack:
+   ```bash
+   docker compose -f docker-compose.octane.init.yml down
+   ```
 
-### Option B — **One‑off container** (auto override CMD)
-Run a one‑time container to initialize Laravel:
+### Option B — One-off Run
+Run Laravel setup without starting the whole stack:
 ```bash
 docker compose -f docker-compose.octane.dev.yml run --rm --no-deps octane \
   bash -lc "composer create-project laravel/laravel . && php artisan key:generate"
 ```
-Then bring up your dev/prod stack normally.
 
-### Option C — **Temporary command override**
-1. Add this to the `octane` service temporarily in `docker-compose.octane.dev.yml`:
-```yaml
-command: ["bash", "-lc", "sleep infinity"]
-```
-2. Start the stack and initialize Laravel:
-```bash
-docker compose -f docker-compose.octane.dev.yml up -d --build
+> If you plan to use **FrankenPHP** dev, you can switch the server during `octane:install` using `--server=frankenphp`.
 
-docker compose -f docker-compose.octane.dev.yml exec octane bash -lc \
-  "composer create-project laravel/laravel . && php artisan key:generate"
-```
-3. Remove the `command:` override and rebuild:
+---
+
+## Development
+
+### A) Swoole Dev (`docker-compose.octane.dev.yml`)
+1. **Ensure** `Dockerfile.octane` installs `pcntl` and `swoole`.
+2. Start dev stack:
+   ```bash
+   docker compose -f docker-compose.octane.dev.yml up -d --build
+   ```
+3. Access the app at: `http://localhost:8080`
+4. (First time) Install PHP deps & migrate:
+   ```bash
+   docker compose -f docker-compose.octane.dev.yml exec octane bash -lc \
+     "composer install && php artisan migrate"
+   ```
+5. **Auto reload** (watch mode): ensure local `chokidar` exists:
+   ```bash
+   cd app && npm init -y && npm i -D chokidar
+   ```
+   Then either set in compose:
+   ```yaml
+   services:
+     octane:
+       command: ["php","artisan","octane:start","--watch"]
+   ```
+   or use `docker/dev-start.sh` to auto-install watcher and patch `.env` at startup.
+
+### B) FrankenPHP Dev (`docker-compose.franken.dev.yml`)
+1. Start dev stack (no Nginx needed):
+   ```bash
+   docker compose -f docker-compose.franken.dev.yml up -d --build
+   ```
+2. Access the app at: `http://localhost:8080`
+3. First-time deps & migrate:
+   ```bash
+   docker compose -f docker-compose.franken.dev.yml exec octane php artisan migrate
+   ```
+4. Watch mode requires local `chokidar` as well:
+   ```bash
+   cd app && npm init -y && npm i -D chokidar
+   ```
+   The provided `docker/dev-start-franken.sh` script auto-installs it and patches `.env`.
+
+---
+
+## Production
+
+### A) Swoole Prod (`docker-compose.octane.prod.yml`)
+- Build an optimized image via `Dockerfile.octane` (`target: prod`).
+- Run behind Nginx (compose includes an Nginx service) or your preferred reverse proxy.
+- Minimal run:
+  ```bash
+  docker compose -f docker-compose.octane.prod.yml up -d --build
+  docker compose -f docker-compose.octane.prod.yml exec octane php artisan migrate --force
+  ```
+- Make sure your `.env` or environment variables contain:
+  ```env
+  APP_ENV=production
+  APP_DEBUG=false
+  DB_CONNECTION=mysql
+  DB_HOST=db
+  DB_PORT=3306
+  DB_DATABASE=laravel
+  DB_USERNAME=laravel
+  DB_PASSWORD=laravel
+  ```
+
+### B) FrankenPHP Prod (`docker-compose.franken.prod.yml`)
+- Single service (Nginx optional). Expose `8000` or place a reverse proxy in front.
+- Minimal run:
+  ```bash
+  docker compose -f docker-compose.franken.prod.yml up -d --build
+  docker compose -f docker-compose.franken.prod.yml exec octane php artisan migrate --force
+  ```
+- Env recommendations same as Swoole prod. The FrankenPHP CMD caches config at start to pick up latest ENV values.
+
+---
+
+## Environment Auto-Configuration
+For **dev** ergonomics, use a start script that ensures `.env` exists and patches DB settings from container ENV. Example (`docker/dev-start.sh` / `docker/dev-start-franken.sh`):
+
 ```bash
-docker compose -f docker-compose.octane.dev.yml up -d --build
+# Pseudocode: ensure .env exists
+[ -f .env ] || cp .env.example .env || touch .env
+
+# Patch DB_* with safe defaults or values from compose
+DB_CONNECTION=${DB_CONNECTION:-mysql}
+DB_HOST=${DB_HOST:-db}
+DB_PORT=${DB_PORT:-3306}
+DB_DATABASE=${DB_DATABASE:-laravel}
+DB_USERNAME=${DB_USERNAME:-laravel}
+DB_PASSWORD=${DB_PASSWORD:-laravel}
+# sed -i to set or append those keys
+```
+
+> In **prod**, prefer passing DB settings via environment variables and run `php artisan config:cache` **at container start**, not at build time, so the container always uses the orchestrator-provided values.
+
+---
+
+## Watcher (`--watch`) & Chokidar
+Octane’s file watcher uses Node’s **`chokidar`** and requires it as a **local** dependency:
+
+```bash
+cd app
+npm init -y           # if package.json is missing
+npm install -D chokidar
+```
+
+Global installs (`npm i -g`) won’t work because Octane resolves `require('chokidar')` from the project’s `node_modules`.
+
+---
+
+## Performance Tips
+- **Swoole**: tune `--workers` and `--task-workers` (via Dockerfile CMD or compose). Enable OPCache (`opcache.enable=1`, `opcache.enable_cli=1`, set generous memory and disable timestamp validation in prod).
+- **FrankenPHP**: you can run without Nginx; for TLS/HTTP/2/3, either rely on FrankenPHP’s Caddy or put a reverse proxy in front.
+- Cache config/routes/views in prod. Avoid `--watch` in production.
+
+---
+
+## Optional: Makefile Shortcuts
+```makefile
+init:
+	@docker compose -f docker-compose.octane.init.yml up -d --build
+	@docker compose -f docker-compose.octane.init.yml exec octane bash -lc "composer create-project laravel/laravel . && php artisan key:generate"
+	@docker compose -f docker-compose.octane.init.yml down
+
+up-dev-swoole:
+	docker compose -f docker-compose.octane.dev.yml up -d --build
+
+up-dev-franken:
+	docker compose -f docker-compose.franken.dev.yml up -d --build
+
+up-prod-swoole:
+	docker compose -f docker-compose.octane.prod.yml up -d --build
+
+up-prod-franken:
+	docker compose -f docker-compose.franken.prod.yml up -d --build
+
+migrate-dev-swoole:
+	docker compose -f docker-compose.octane.dev.yml exec octane php artisan migrate
+
+migrate-dev-franken:
+	docker compose -f docker-compose.franken.dev.yml exec octane php artisan migrate
 ```
 
 ---
 
-## A) Octane Dev (Swoole) — Development
-
-> Optional: Copy Nginx config template for Octane
-```bash
-cp docker/nginx.octane.conf docker/nginx.conf
-```
-
-### Start containers
-```bash
-docker compose -f docker-compose.octane.dev.yml up -d --build
-```
-
-### Install dependencies (if not using create‑project)
-```bash
-docker compose -f docker-compose.octane.dev.yml exec octane bash -lc \
-  "composer install && php artisan key:generate && php artisan migrate"
-```
-
-### Access the app
-```
-http://localhost:8080
-```
-
----
-
-## B) Octane Production (Swoole + Nginx)
-Run optimized Laravel Octane behind Nginx reverse proxy.
-
-### .env configuration
-Ensure these values are correct:
-```
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://yourdomain.com
-TRUSTED_PROXIES=*
-```
-Include your production DB/Redis credentials.
-
-### Build & Run
-```bash
-docker compose -f docker-compose.octane.prod.yml up -d --build
-```
-
-### Run migrations (optional but recommended)
-```bash
-docker compose -f docker-compose.octane.prod.yml exec octane php artisan migrate --force
-```
-
-> **SSL:** Terminate TLS at your reverse proxy/load balancer, or mount certs into the Nginx container and configure `listen 443 ssl;`.
-
----
-
-## C) Classic Production (PHP‑FPM + Nginx)
-If you prefer not to use Swoole in production.
-
-### Run
-```bash
-docker compose -f docker-compose.prod.classic.yml up -d --build
-```
-
-### Migrate
-```bash
-docker compose -f docker-compose.prod.classic.yml exec php php artisan migrate --force
-```
-
----
-
-## Build Optimization & Caching
-Before building final production images (or within Dockerfile):
-```bash
-composer install --optimize-autoloader --no-dev
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-```
-
----
-
-## Healthcheck & Monitoring
-- Add a `/health` route in your Laravel app for probes.
-- Alternatively, run container checks like `php -v` or `curl -f http://127.0.0.1/health`.
-
----
-
-## Scaling & Swoole Tuning
-- Adjust worker counts in `Dockerfile.octane` (e.g., `--workers`, `--task-workers`).
-- Enable OPCache and cache config/route/view in production.
-- For stateful services, consider sticky sessions when scaling horizontally.
-
----
-
-## Common Commands
-```bash
-# Tail logs
-docker compose -f docker-compose.octane.dev.yml logs -f nginx
-
-# Enter container shell
-docker compose -f docker-compose.octane.dev.yml exec octane bash
-
-# Example queue worker
-docker compose -f docker-compose.octane.prod.yml exec octane php artisan queue:work --daemon
-```
-
----
-
-## Troubleshooting
-
-### 1) "Project directory is not empty"
-`composer create-project` requires an empty folder. Ensure no leftover files exist:
-```bash
-ls -la
-# Make sure nothing critical exists before running:
-rm -rf !(vendor|docker) 2>/dev/null || true
-```
-
-### 2) File ownership issues (Linux)
-If files are owned by root, fix ownership:
-```bash
-docker compose -f docker-compose.octane.dev.yml exec octane \
-  bash -lc "chown -R www-data:www-data ."
-```
-Or align UID/GID in Dockerfile.
-
-### 3) Port conflicts
-Change port mapping in Nginx service (e.g., `8080:80` → `8081:80`).
-
-### 4) Environment and proxies
-Ensure `APP_URL` is correct. Behind load balancers, use `TRUSTED_PROXIES=*` or configure `App\Http\Middleware\TrustProxies`.
-
----
-
-## Security Guidelines
-- Use separate `.env` files for dev/staging/prod. Never commit `.env`.
-- Terminate TLS at trusted reverse proxy or LB; enable HTTP/2 if possible.
-- Configure upload limits, rate limiting, and Nginx buffering properly.
-
----
-
-## Next Steps
-- Add CI/CD pipelines for automated build & push.
-- Implement DB backups and zero‑downtime deployment (`php artisan down --render=...`).
-- Optionally migrate to **RoadRunner** (replace `Dockerfile` and Octane command accordingly).
+Happy shipping with Octane — whether you choose **Swoole** or **FrankenPHP**! 🚀
 
