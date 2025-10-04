@@ -26,7 +26,7 @@ CMD ["bash","-lc","test -x /usr/local/bin/dev-start.sh && /usr/local/bin/dev-sta
 # ---------- Build assets stage ----------
 FROM node:20-alpine AS asset-builder
 WORKDIR /app
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
+COPY app/ .
 # Fallback to npm if lockfile not present
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund;     elif [ -f yarn.lock ]; then yarn install --frozen-lockfile;     elif [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i --frozen-lockfile;     else npm install --no-audit --no-fund; fi
 COPY . .
@@ -43,11 +43,11 @@ USER laravel
 WORKDIR /var/www/html
 
 # Copy app source (expect context is project root)
-COPY --chown=laravel:laravel . .
+COPY --chown=laravel:laravel app/ .
 # Install dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 # Copy built assets from builder if available
-COPY --from=asset-builder /app/public/build ./public/build 2>/dev/null || true
+COPY --from=asset-builder /app/public/build ./public/build
 
 # Optimize Laravel
 RUN php artisan storage:link || true  && php artisan config:cache  && php artisan route:cache  && php artisan view:cache

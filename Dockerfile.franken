@@ -4,11 +4,12 @@
 # ===========================================
 
 # -------- Base (FrankenPHP + PHP 8.3, Alpine) --------
-FROM ghcr.io/dunglas/frankenphp:1.3-php8.3-alpine AS base
+ARG PHP_VERSION=8.3
+FROM php:${PHP_VERSION}-alpine AS base
 
 # System deps & PHP extensions
 RUN apk add --no-cache \
-      git unzip icu-dev libzip-dev libjpeg-turbo-dev libpng-dev libwebp-dev freetype-dev oniguruma-dev \
+      git unzip icu-dev bash libzip-dev libjpeg-turbo-dev libpng-dev libwebp-dev freetype-dev oniguruma-dev \
   && docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \
   && docker-php-ext-install -j"$(nproc)" pdo pdo_mysql mbstring zip gd intl opcache pcntl \
   && rm -rf /var/cache/apk/*
@@ -40,7 +41,7 @@ CMD ["bash","-lc","test -x /usr/local/bin/dev-start-franken.sh && /usr/local/bin
 FROM node:20-alpine AS asset-builder
 WORKDIR /app
 # Install dependencies if a lockfile or package.json exists
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./ 2>/dev/null || true
+COPY app/ .
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
     elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
     elif [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i --frozen-lockfile; \
@@ -71,7 +72,7 @@ COPY --chown=laravel:laravel . .
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # Copy built frontend assets from the builder (if any)
-COPY --from=asset-builder /app/public/build ./public/build 2>/dev/null || true
+COPY --from=asset-builder /app/public/build ./public/build
 
 # Precompile caches that are safe at build-time (route/view). Config cache is done at start to pick up runtime env.
 RUN php artisan route:cache || true && php artisan view:cache || true

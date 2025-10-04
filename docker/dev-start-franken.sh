@@ -2,6 +2,11 @@
 set -e
 cd /var/www/html
 
+# Ensure Laravel project exists
+if [ ! -f artisan ]; then
+  composer create-project laravel/laravel . --prefer-dist --no-interaction
+fi
+
 # Ensure .env exists
 if [ ! -f .env ]; then
   [ -f .env.example ] && cp .env.example .env || touch .env

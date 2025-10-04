@@ -66,7 +66,7 @@ You can keep **both** modes in the same repo and choose at runtime via different
 ---
 
 ## Initialization (First-Time Setup)
-You need a Laravel app in `./app`. Choose one option below.
+You need a Laravel app in `./app`. Choose one option below. (Added to dev-start script)
 
 ### Option A — Init Compose Stack
 1. Create the `app` folder:
@@ -78,22 +78,8 @@ You need a Laravel app in `./app`. Choose one option below.
    docker compose -f docker-compose.octane.init.yml up -d --build
    ```
 3. Inside the `octane` container, create the app and install Octane:
-   
-   Swoole:
    ```bash
-   docker compose -f docker-compose.octane.init.yml exec octane bash -lc \
-     'set -e; [ -f artisan ] || composer create-project laravel/laravel .; \
-      php artisan key:generate || true; \
-      composer require laravel/octane --no-interaction --no-progress; \
-      php artisan octane:install --server=swoole || true'
-   ```
-   FrankenPHP:
-   ```bash
-   docker compose -f docker-compose.octane.init.yml exec octane bash -lc \
-     'set -e; [ -f artisan ] || composer create-project laravel/laravel .; \
-      php artisan key:generate || true; \
-      composer require laravel/octane --no-interaction --no-progress; \
-      php artisan octane:install --server=frankenphp || true'
+   docker compose -f docker-compose.octane.init.yml exec octane bash -lc 'set -e; [ -f artisan ] || composer create-project laravel/laravel .; php artisan key:generate || true; composer require laravel/octane --no-interaction --no-progress; php artisan octane:install --server=swoole || true'
    ```
 4. Stop the init stack:
    ```bash
@@ -122,8 +108,7 @@ docker compose -f docker-compose.octane.dev.yml run --rm --no-deps octane \
 3. Access the app at: `http://localhost:8080`
 4. (First time) Install PHP deps & migrate:
    ```bash
-   docker compose -f docker-compose.octane.dev.yml exec octane bash -lc \
-     "composer install && php artisan migrate"
+   docker compose -f docker-compose.octane.dev.yml exec octane bash -lc "composer install && php artisan migrate"
    ```
 5. **Auto reload** (watch mode): ensure local `chokidar` exists:
    ```bash

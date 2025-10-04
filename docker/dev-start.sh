@@ -4,6 +4,11 @@ cd /var/www/html
 
 echo "[dev-start] Laravel Octane (Swoole) bootstrap"
 
+# Ensure Laravel project exists
+if [ ! -f artisan ]; then
+  composer create-project laravel/laravel . --prefer-dist --no-interaction
+fi
+
 # 1) Ensure .env exists
 if [ ! -f .env ]; then
   [ -f .env.example ] && cp .env.example .env || touch .env
