@@ -37,8 +37,7 @@ docker compose -f docker-compose.octane.init.yml up -d --build
 ```
 2. Create the Laravel project inside the container:
 ```bash
-docker compose -f docker-compose.octane.init.yml exec octane bash -lc \
-  "composer create-project laravel/laravel . && php artisan key:generate"
+docker compose -f docker-compose.octane.init.yml exec octane bash -lc "set -e; [ -f artisan ] || composer create-project laravel/laravel .; php artisan key:generate || true; if php -m | grep -qi swoole; then echo 'swoole OK'; else echo '[ERROR] PHP ext-swoole not installed.'; exit 1; fi; composer require laravel/octane:^2.5 --no-interaction --no-progress; php artisan octane:install --server=swoole --no-interaction || true; echo '✅ Laravel + Octane (Swoole) ready.'"
 ```
 3. Shut down the init stack:
 ```bash
